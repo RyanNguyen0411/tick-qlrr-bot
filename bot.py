@@ -1,6 +1,8 @@
+import os
 import logging
 import requests
 import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -18,12 +20,32 @@ logger = logging.getLogger(__name__)
 # --- THÔNG TIN CẤU HÌNH ---
 TOKEN = "9161885394:AAEsDFlZGL0sdyQ42rge5uA_S0WZmK96vEI"
 GROUP_ID = -5299119796
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxWIY0U7L7uRCiCGvdQnrOLhUlD8jovPcb6Sn3NXWscQzzPOHP-t16TwLnQQ2uGJ--u/exec"
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxgvadcA62AogUm7ZZrxn_PVqhi0TXr829AF2gZ2eQ1XdcZ9UF7oBX1oCt4ECmOry8b/exec"
 SHEET_LINK = "https://docs.google.com/spreadsheets/d/1mM5h6cupkJr4i7oVLNFySbjxCGD8PHQIEUyW0ccu8-Q/edit?usp=sharing"
 
 user_data_cache = {}
-sent_alerts = set() # Lưu các mã đơn đã gửi cảnh báo để tránh spam liên tục
+sent_alerts = set()  # Lưu các mã đơn đã gửi cảnh báo để tránh spam liên tục
 LOAI_OPTIONS = ["Nhã mã", "Hư hỏng", "2 mã", "Nhận tải thiếu", "Tráo SP", "Khác"]
+
+
+# --- HTTP SERVER MỞ PORT CHO RENDER WEB SERVICE FREE ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logger.info(f"🌐 Health check server đang lắng nghe tại cổng {port}")
+    server.serve_forever()
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != GROUP_ID:
@@ -36,6 +58,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/them VNGH80462151111 https://noibo.ghn.vn/ghn-ticket/detail/6277364</code>",
         parse_mode="HTML"
     )
+
 
 async def cmd_them(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != GROUP_ID:
@@ -73,6 +96,7 @@ async def cmd_them(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -83,7 +107,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Xử lý nút bấm cảnh báo quá hạn (Tối ưu tốc độ phản hồi < 0.5s)
     if data_key.startswith("action_"):
         parts = data_key.split("_")
-        action = parts[1] # xuly hoặc luulai
+        action = parts[1]  # xuly hoặc luulai
         ma_don = parts[2]
 
         note_text = "Đã Xử Lý" if action == "xuly" else "Lưu lại thông tin"
@@ -97,7 +121,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
-        # 2. GỌI NGẨM ĐẨY DỮ LIỆU LÊN GOOGLE SHEET
+        # 2. GỌI NGẦM ĐẨY DỮ LIỆU LÊN GOOGLE SHEET
         def send_background():
             try:
                 payload = {
@@ -136,7 +160,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"- <b>Tra cứu tại link:</b> <a href=\"{SHEET_LINK}\">NHẤN VÀO ĐỂ MỞ LINK</a>\n"
             "- <b>Cú pháp cập nhật QLRR:</b> <code>/them [mã đơn] [Link QLRR]</code> (cách nhau bằng dấu cách)"
         )
-        
+
         del user_data_cache[user_id]
         await query.edit_message_text(success_msg, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -153,12 +177,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         threading.Thread(target=send_background_them, daemon=True).start()
 
+
 # Hàm chạy nền kiểm tra đơn quá hạn mỗi 60 giây dùng Thread độc lập
 def background_checker(application):
     import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    
+
     async def check_loop():
         while True:
             try:
@@ -169,7 +194,7 @@ def background_checker(application):
                         ma_don = item["ma_don"]
                         if ma_don not in sent_alerts:
                             sent_alerts.add(ma_don)
-                            
+
                             ngay_nhap = item["ngay_nhap"]
                             loai = item["loai"]
                             link_qlrr = item["link_qlrr"]
@@ -202,14 +227,18 @@ def background_checker(application):
                             )
             except Exception as e:
                 logger.error(f"Lỗi khi quét đơn quá hạn: {e}")
-            
+
             await asyncio.sleep(60)
 
     loop.run_until_complete(check_loop())
 
+
 def main():
+    # Mở cổng HTTP để Render Web Service Free nhận diện được port
+    threading.Thread(target=start_web_server, daemon=True).start()
+
     application = ApplicationBuilder().token(TOKEN).build()
-    
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("them", cmd_them))
     application.add_handler(CallbackQueryHandler(button_callback))
@@ -218,8 +247,9 @@ def main():
     t = threading.Thread(target=background_checker, args=(application,), daemon=True)
     t.start()
 
-    print("🚀 Bot đang chạy mượt mà, tốc độ phản hồi cực nhanh!")
+    print("🚀 Bot đang chạy mượt mà trên Render Web Service!")
     application.run_polling()
+
 
 if __name__ == "__main__":
     main()
