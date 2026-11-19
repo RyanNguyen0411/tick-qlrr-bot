@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # --- THÔNG TIN CẤU HÌNH ---
 TOKEN = "9161885394:AAEsDFlZGL0sdyQ42rge5uA_S0WZmK96vEI"
 GROUP_ID = -5299119796
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxgvadcA62AogUm7ZZrxn_PVqhi0TXr829AF2gZ2eQ1XdcZ9UF7oBX1oCt4ECmOry8b/exec"
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxWIY0U7L7uRCiCGvdQnrOLhUlD8jovPcb6Sn3NXWscQzzPOHP-t16TwLnQQ2uGJ--u/exec"
 SHEET_LINK = "https://docs.google.com/spreadsheets/d/1mM5h6cupkJr4i7oVLNFySbjxCGD8PHQIEUyW0ccu8-Q/edit?usp=sharing"
 
 user_data_cache = {}
@@ -104,7 +104,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data_key = query.data
 
-    # Xử lý nút bấm cảnh báo quá hạn (Tối ưu tốc độ phản hồi < 0.5s)
+    # Xử lý nút bấm cảnh báo quá hạn (Phản hồi giao diện < 0.5s)
     if data_key.startswith("action_"):
         parts = data_key.split("_")
         action = parts[1]  # xuly hoặc luulai
@@ -112,7 +112,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         note_text = "Đã Xử Lý" if action == "xuly" else "Lưu lại thông tin"
 
-        # 1. PHẢN HỒI GIAO DIỆN NGAY LẬP TỨC CHO NGƯỜI DÙNG
         await query.edit_message_text(
             f"✅ <b>ĐÃ CẬP NHẬT PHẢN HỒI</b>\n\n"
             f"• <b>Mã đơn:</b> <code>{ma_don}</code>\n"
@@ -121,7 +120,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
-        # 2. GỌI NGẦM ĐẨY DỮ LIỆU LÊN GOOGLE SHEET
         def send_background():
             try:
                 payload = {
@@ -129,7 +127,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "ma_don": ma_don,
                     "am_note": note_text
                 }
-                requests.post(WEB_APP_URL, json=payload, timeout=5)
+                res = requests.post(WEB_APP_URL, json=payload, timeout=15)
+                logger.info(f"Cập nhật AM Note [{ma_don}]: HTTP {res.status_code} - {res.text}")
             except Exception as e:
                 logger.error(f"Lỗi cập nhật AM Note ngầm: {e}")
 
@@ -151,6 +150,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ma_don = data["ma_don"]
         link_qlrr = data["link_qlrr"]
 
+        # 1. Phản hồi giao diện ngay lập tức (< 0.5s)
         success_msg = (
             f"✅ <b>ĐÃ CẬP NHẬT VÀO DANH SÁCH</b>\n\n"
             f"• <b>Mã đơn:</b> <code>{ma_don}</code>\n"
@@ -164,6 +164,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del user_data_cache[user_id]
         await query.edit_message_text(success_msg, parse_mode="HTML", disable_web_page_preview=True)
 
+        # 2. Đẩy dữ liệu lên Google Sheet ngầm
         def send_background_them():
             try:
                 payload = {
@@ -171,7 +172,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "loai": loai_chon,
                     "link_qlrr": link_qlrr
                 }
-                requests.post(WEB_APP_URL, json=payload, timeout=5)
+                res = requests.post(WEB_APP_URL, json=payload, timeout=15)
+                logger.info(f"Ghi đơn [{ma_don}] lên Sheet: HTTP {res.status_code} - {res.text}")
             except Exception as e:
                 logger.error(f"Lỗi gửi ngầm Google Script: {e}")
 
@@ -187,7 +189,7 @@ def background_checker(application):
     async def check_loop():
         while True:
             try:
-                response = requests.get(WEB_APP_URL, timeout=10)
+                response = requests.get(WEB_APP_URL, timeout=15)
                 if response.status_code == 200:
                     alerts = response.json()
                     for item in alerts:
@@ -224,32 +226,3 @@ def background_checker(application):
                                 reply_markup=reply_markup,
                                 parse_mode="HTML",
                                 disable_web_page_preview=True
-                            )
-            except Exception as e:
-                logger.error(f"Lỗi khi quét đơn quá hạn: {e}")
-
-            await asyncio.sleep(60)
-
-    loop.run_until_complete(check_loop())
-
-
-def main():
-    # Mở cổng HTTP để Render Web Service Free nhận diện được port
-    threading.Thread(target=start_web_server, daemon=True).start()
-
-    application = ApplicationBuilder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("them", cmd_them))
-    application.add_handler(CallbackQueryHandler(button_callback))
-
-    # Khởi chạy luồng quét ngầm độc lập
-    t = threading.Thread(target=background_checker, args=(application,), daemon=True)
-    t.start()
-
-    print("🚀 Bot đang chạy mượt mà trên Render Web Service!")
-    application.run_polling()
-
-
-if __name__ == "__main__":
-    main()
