@@ -24,7 +24,7 @@ WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxWIY0U7L7uRCiCGvdQnrOLhU
 SHEET_LINK = "https://docs.google.com/spreadsheets/d/1mM5h6cupkJr4i7oVLNFySbjxCGD8PHQIEUyW0ccu8-Q/edit?usp=sharing"
 
 user_data_cache = {}
-sent_alerts = set()  # Lưu các mã đơn đã gửi cảnh báo để tránh spam liên tục
+sent_alerts = set()
 LOAI_OPTIONS = ["Nhã mã", "Hư hỏng", "2 mã", "Nhận tải thiếu", "Tráo SP", "Khác"]
 
 
@@ -104,10 +104,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data_key = query.data
 
-    # Xử lý nút bấm cảnh báo quá hạn (Phản hồi giao diện < 0.5s)
     if data_key.startswith("action_"):
         parts = data_key.split("_")
-        action = parts[1]  # xuly hoặc luulai
+        action = parts[1]
         ma_don = parts[2]
 
         note_text = "Đã Xử Lý" if action == "xuly" else "Lưu lại thông tin"
@@ -150,7 +149,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ma_don = data["ma_don"]
         link_qlrr = data["link_qlrr"]
 
-        # 1. Phản hồi giao diện ngay lập tức (< 0.5s)
         success_msg = (
             f"✅ <b>ĐÃ CẬP NHẬT VÀO DANH SÁCH</b>\n\n"
             f"• <b>Mã đơn:</b> <code>{ma_don}</code>\n"
@@ -164,7 +162,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del user_data_cache[user_id]
         await query.edit_message_text(success_msg, parse_mode="HTML", disable_web_page_preview=True)
 
-        # 2. Đẩy dữ liệu lên Google Sheet ngầm
         def send_background_them():
             try:
                 payload = {
@@ -180,7 +177,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         threading.Thread(target=send_background_them, daemon=True).start()
 
 
-# Hàm chạy nền kiểm tra đơn quá hạn mỗi 60 giây dùng Thread độc lập
 def background_checker(application):
     import asyncio
     loop = asyncio.new_event_loop()
@@ -226,3 +222,30 @@ def background_checker(application):
                                 reply_markup=reply_markup,
                                 parse_mode="HTML",
                                 disable_web_page_preview=True
+                            )
+            except Exception as e:
+                logger.error(f"Lỗi khi quét đơn quá hạn: {e}")
+
+            await asyncio.sleep(60)
+
+    loop.run_until_complete(check_loop())
+
+
+def main():
+    threading.Thread(target=start_web_server, daemon=True).start()
+
+    application = ApplicationBuilder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("them", cmd_them))
+    application.add_handler(CallbackQueryHandler(button_callback))
+
+    t = threading.Thread(target=background_checker, args=(application,), daemon=True)
+    t.start()
+
+    logger.info("🚀 Bot đang chạy mượt mà trên Render Web Service!")
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
